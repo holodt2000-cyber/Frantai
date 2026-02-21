@@ -67,15 +67,33 @@ async def quick_translate(text: str, target_lang: str):
     except: return text
 
 async def analyze_intent(text: str) -> str:
-    """Определяет: CODE, MATH, RESEARCH или GENERAL"""
+    """Улучшенный классификатор с жесткими правилами"""
     try:
         client = OpenAI(api_key=KEYS["groq"], base_url="https://api.groq.com/openai/v1")
-        prompt = f"Analyze query and return ONLY ONE word: CODE, MATH, RESEARCH, GENERAL. Query: {text}"
+        # Улучшаем промпт: добавляем описание категорий
+        system_prompt = (
+            "You are a classifier. Categories: "
+            "CODE (programming, scripts, databases, html/css), "
+            "MATH (formulas, equations), "
+            "RESEARCH (news, facts, search), "
+            "GENERAL (chat, greetings). "
+            "Return ONLY the category name."
+        )
+        
         resp = await asyncio.get_event_loop().run_in_executor(None, lambda: client.chat.completions.create(
-            model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}], timeout=5
+            model="llama-3.1-8b-instant", 
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ], 
+            timeout=5
         ))
-        return resp.choices[0].message.content.strip().upper()
-    except: return "GENERAL"
+        intent = resp.choices[0].message.content.strip().upper()
+        # Чистим ответ от точек и лишних слов
+        intent = re.sub(r'[^A-Z]', '', intent)
+        return intent if intent in ["CODE", "MATH", "RESEARCH"] else "GENERAL"
+    except: 
+        return "GENERAL"
 
 async def perplexity_search(query: str) -> str:
     """Метод Perplexity: поиск в реальном времени"""
@@ -139,9 +157,13 @@ async def ask_ai(request: ChatRequest):
             if target["heavy"] and is_russian:
                 final_content = await quick_translate(final_content, "Russian")
 
+            # Внутри блока try метода ask_ai, перед return:
             res = {
-                "status": "success", "model": resp.model, 
-                "intent": intent, "family": f_name, "content": final_content
+                "status": "success", 
+                "model": resp.model, 
+                "intent": intent,     # Это поможет нам понять, почему выбрана Llama
+                "family": f_name, 
+                "content": final_content
             }
             if request.thinking and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
                 res["thought"] = msg.reasoning_content
