@@ -192,20 +192,18 @@ if TG_TOKEN:
             req = ChatRequest(messages=[Message(role="user", content=message.text)])
             response = await ask_expert(req)
             
-            header = f"🤖 *Model:* `{response['model']}`\n🎯 *Intent:* `{response['intent']}`\n\n"
             content = response.get('content', '')
             thought = response.get('thought', '')
+            header = f"🤖 *Model:* `{response['model']}`\n🎯 *Intent:* `{response['intent']}`\n\n"
 
-            # 1. Сначала отправляем мысли модели (если есть)
-            if thought:
-                thought_text = f"🧠 *Мысли модели:*\n\n{thought[:3900]}..."
-                try:
-                    await message.answer(thought_text, parse_mode=ParseMode.MARKDOWN)
-                except:
-                    await message.answer(thought_text, parse_mode=None)
-
-            # 2. Функция умной разбивки основного ответа
-            def split_text(text, limit=4000):
+            # Внутренняя функция для безопасной отправки длинных текстов
+            async def safe_send(text, prefix=""):
+                if not text: return
+                
+                # Лимит чуть меньше 4096 для запаса на разметку
+                limit = 3900 
+                
+                # Разбивка текста на части
                 chunks = []
                 while len(text) > 0:
                     if len(text) <= limit:
@@ -215,19 +213,26 @@ if TG_TOKEN:
                     if split_pos <= 0: split_pos = limit
                     chunks.append(text[:split_pos])
                     text = text[split_pos:].lstrip()
-                return chunks
 
-            # 3. Отправка основного контента частями
-            full_text = header + content
-            for chunk in split_text(full_text):
-                try:
-                    await message.answer(chunk, parse_mode=ParseMode.MARKDOWN)
-                except Exception:
-                    await message.answer(chunk, parse_mode=None)
+                # Отправка каждой части
+                for i, chunk in enumerate(chunks):
+                    msg_part = f"{prefix} (Часть {i+1})\n\n{chunk}" if len(chunks) > 1 else f"{prefix}\n\n{chunk}"
+                    try:
+                        await message.answer(msg_part, parse_mode=ParseMode.MARKDOWN)
+                    except:
+                        await message.answer(msg_part, parse_mode=None)
+
+            # 1. Сначала отправляем мысли (если есть)
+            if thought:
+                await safe_send(thought, prefix="🧠 *Мысли модели:*")
+
+            # 2. Затем отправляем основной контент с заголовком
+            await safe_send(content, prefix=header)
 
         except Exception as e:
+            # Выводим более детальную ошибку для отладки
+            print(f"Error in handler: {e}")
             await message.answer(f"❌ Ошибка: {str(e)[:100]}")
-
 # --- 5. ЗАПУСК И ЗДОРОВЬЕ ---
 
 @app.on_event("startup")
