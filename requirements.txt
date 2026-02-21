@@ -5,3 +5,4 @@ openai
 duckduckgo_search
 aiogram
 aiohttp
+aiogram

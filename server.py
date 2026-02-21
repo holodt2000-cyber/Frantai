@@ -8,11 +8,11 @@ from typing import List, Optional
 from openai import OpenAI
 from duckduckgo_search import DDGS
 from fastapi.responses import HTMLResponse
-
-warnings.filterwarnings("ignore")
-
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 app = FastAPI(title="Frantai Smart Orchestrator")
-
 # --- 1. КОНФИГУРАЦИЯ ---
 KEYS = {
     "cerebras": os.getenv("CEREBRAS_KEY", "csk-x989hhdnn9p2nexmt24ndk9ten4k3cmd82je9k4jxcnjwh6x"),
@@ -20,6 +20,9 @@ KEYS = {
     "groq": os.getenv("GROQ_KEY", "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"),
     "openrouter": os.getenv("OPENROUTER_KEY", "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")
 }
+
+# Добавь токен в переменные окружения на Render
+TG_TOKEN = os.getenv("TELEGRAM_TOKEN", "6796190792:AAEngQeCe0z7XtwhyqCpB-1ADWgBOXx9VWo")
 
 FAMILIES = {
     "deepseek": {
@@ -56,10 +59,9 @@ class ChatRequest(BaseModel):
 # --- 2. ВСПОМОГАТЕЛЬНЫЕ МОДУЛИ ---
 
 async def quick_translate(text: str, target_lang: str):
-    """Моментальный перевод через Groq"""
     try:
         client = OpenAI(api_key=KEYS["groq"], base_url="https://api.groq.com/openai/v1")
-        prompt = f"Translate the following text to {target_lang}. Output ONLY the translation: {text}"
+        prompt = f"Translate to {target_lang}. Output ONLY translation: {text}"
         resp = await asyncio.get_event_loop().run_in_executor(None, lambda: client.chat.completions.create(
             model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}], timeout=10
         ))
@@ -67,44 +69,20 @@ async def quick_translate(text: str, target_lang: str):
     except: return text
 
 async def analyze_intent(text: str) -> str:
-    """Улучшенный классификатор: теперь он точно отличит код от болтовни"""
     try:
         client = OpenAI(api_key=KEYS["groq"], base_url="https://api.groq.com/openai/v1")
-        
-        # Мы даем модели четкие инструкции (System Prompt)
         messages = [
-            {
-                "role": "system", 
-                "content": (
-                    "You are a professional query classifier. "
-                    "Categories: CODE (any programming, scripts, architecture, debugging), "
-                    "MATH (formulas, logic puzzles), "
-                    "RESEARCH (news, facts, search queries), "
-                    "GENERAL (greetings, simple chat). "
-                    "Respond with ONLY ONE WORD from the list."
-                )
-            },
+            {"role": "system", "content": "Return ONLY ONE WORD: CODE, MATH, RESEARCH, or GENERAL."},
             {"role": "user", "content": text}
         ]
-        
         resp = await asyncio.get_event_loop().run_in_executor(None, lambda: client.chat.completions.create(
-            model="llama-3.1-8b-instant", 
-            messages=messages, 
-            temperature=0, # Убираем креативность для точности
-            timeout=7
+            model="llama-3.1-8b-instant", messages=messages, temperature=0, timeout=7
         ))
-        
-        intent = resp.choices[0].message.content.strip().upper()
-        # Очистка от лишних знаков препинания
-        intent = "".join(filter(str.isalpha, intent))
-        
+        intent = "".join(filter(str.isalpha, resp.choices[0].message.content.strip().upper()))
         return intent if intent in ["CODE", "MATH", "RESEARCH"] else "GENERAL"
-    except Exception as e:
-        print(f"⚠️ Intent analysis failed: {e}")
-        return "GENERAL"
+    except: return "GENERAL"
 
 async def perplexity_search(query: str) -> str:
-    """Метод Perplexity: поиск в реальном времени"""
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, region='ru-ru', max_results=3))
@@ -112,15 +90,13 @@ async def perplexity_search(query: str) -> str:
     except: return ""
 
 def analyze_complexity(text: str) -> bool:
-    """Выбор между Heavy и Fast очередью"""
     score = 0
-    if len(text.split()) > 15: score += 2
+    if len(text.split()) > 12: score += 2
     if re.search(r'[{}[\]()=;<>?]', text): score += 3
-    if any(kw in text.lower() for kw in ['код', 'напиши', 'реши', 'почему']): score += 2
-    return score >= 4
+    if any(kw in text.lower() for kw in ['код', 'напиши', 'реши', 'сервер']): score += 2
+    return score >= 3
 
 def get_family_by_intent(intent: str) -> str:
-    """Маппинг задачи на семейство"""
     return {"CODE": "deepseek", "MATH": "llama", "RESEARCH": "deepseek"}.get(intent, "llama")
 
 # --- 3. ЦЕНТРАЛЬНЫЙ ПРОЦЕССОР (CORE) ---
@@ -130,11 +106,10 @@ async def ask_ai(request: ChatRequest):
     user_query = request.messages[-1].content
     intent = request.intent or await analyze_intent(user_query)
     
-    # Режим Perplexity для RESEARCH
     if intent == "RESEARCH":
         context = await perplexity_search(user_query)
         if context:
-            request.messages[-1].content += f"\n\nCONTEXT FROM WEB:\n{context}"
+            request.messages[-1].content += f"\n\nWEB CONTEXT:\n{context}"
 
     f_name = request.family.lower()
     f_data = FAMILIES.get(f_name, FAMILIES['llama'])
@@ -146,8 +121,6 @@ async def ask_ai(request: ChatRequest):
     for target in queue:
         try:
             current_content = request.messages[-1].content
-            
-            # Перевод для Heavy моделей
             if target["heavy"] and is_russian:
                 current_content = await quick_translate(current_content, "English")
 
@@ -165,41 +138,74 @@ async def ask_ai(request: ChatRequest):
             if target["heavy"] and is_russian:
                 final_content = await quick_translate(final_content, "Russian")
 
-            # Внутри блока try метода ask_ai, перед return:
             res = {
-                "status": "success", 
-                "model": resp.model, 
-                "intent": intent,     # Это поможет нам понять, почему выбрана Llama
-                "family": f_name, 
-                "content": final_content
+                "status": "success", "model": resp.model, 
+                "intent": intent, "family": f_name, "content": final_content
             }
             if request.thinking and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
                 res["thought"] = msg.reasoning_content
             
             return res
-            
-        except Exception as e:
-            print(f"⚠️ Fail: {target['model']} | Error: {str(e)[:50]}")
-            continue
+        except: continue
 
     raise HTTPException(status_code=503, detail="Failover exhausted")
 
-# --- 4. ЭКСПЕРТНЫЙ ПУТЬ (ИСПРАВЛЕНО НА POST) ---
-
 @app.post("/expert")
 async def ask_expert(request: ChatRequest):
-    """Маршрутизация по типам задач"""
     intent = request.intent or await analyze_intent(request.messages[-1].content)
     request.family = get_family_by_intent(intent)
     request.intent = intent
     return await ask_ai(request)
 
-# --- 5. СЛУЖЕБНЫЕ ЭНДПОИНТЫ ---
+# --- 4. TELEGRAM BOT INTEGRATION ---
+
+if TG_TOKEN:
+    bot = Bot(token=TG_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+    dp = Dispatcher()
+
+    @dp.message(Command("start"))
+    async def start_handler(message: types.Message):
+        await message.answer("🚀 *Frantai Orchestrator Online*\nОтправьте любой запрос.")
+
+    @dp.message()
+    async def message_handler(message: types.Message):
+        # Эмуляция ChatRequest для вызова внутренней логики
+        req = ChatRequest(messages=[Message(role="user", content=message.text)])
+        
+        # Отправляем статус "печатает"
+        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        
+        try:
+            # Вызываем экспертную логику напрямую
+            response = await ask_expert(req)
+            
+            header = f"🤖 *Model:* `{response['model']}` | 🎯 *Intent:* `{response['intent']}`\n\n"
+            content = response['content']
+            
+            # Если ответ слишком длинный для одного сообщения (лимит 4096)
+            full_text = header + content
+            if len(full_text) > 4000:
+                for i in range(0, len(full_text), 4000):
+                    await message.answer(full_text[i:i+4000])
+            else:
+                await message.answer(full_text)
+        except Exception as e:
+            await message.answer(f"⚠️ Ошибка: {str(e)[:100]}")
+
+# --- 5. LIFECYCLE & UTILS ---
+
+@app.on_event("startup")
+async def on_startup():
+    if TG_TOKEN:
+        print("✅ Telegram Bot polling started...")
+        asyncio.create_task(dp.start_polling(bot))
 
 @app.get("/health")
-@app.head("/health")
 async def health(): return {"status": "online"}
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
-    return "<h2>Frantai Orchestrator Running</h2>"
+async def root(): return "<h2>Orchestrator + TG Bot Active</h2>"
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
