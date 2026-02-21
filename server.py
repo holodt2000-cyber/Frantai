@@ -83,7 +83,24 @@ async def analyze_intent(text: str) -> str:
         client = OpenAI(api_key=KEYS["groq"], base_url="[https://api.groq.com/openai/v1](https://api.groq.com/openai/v1)")
         resp = await asyncio.get_event_loop().run_in_executor(None, lambda: client.chat.completions.create(
             model="llama-3.1-8b-instant", 
-            messages=[{"role": "system", "content": "Return one word: CODE, MATH, RESEARCH, or GENERAL."}, {"role": "user", "content": text}],
+            messages= [
+            {
+                "role": "system", 
+                "content": (
+                    "You are a strict classifier. Categorize user query into ONLY ONE word:\n"
+                    "CODE: Programming, scripts, SQL, HTML/CSS, errors, architecture.\n"
+                    "MATH: Calculations, logic puzzles, formulas.\n"
+                    "RESEARCH: News, current events, fact-checking, web search.\n"
+                    "GENERAL: Greetings, chat, or if no other category fits.\n\n"
+                    "Examples:\n"
+                    "'Write a python script' -> CODE\n"
+                    "'How to fix 404 error' -> CODE\n"
+                    "'2+2*2' -> MATH\n"
+                    "'Latest bitcoin price' -> RESEARCH"
+                )
+            },
+            {"role": "user", "content": text}
+        ],
             temperature=0, timeout=7
         ))
         match = re.search(r'(CODE|MATH|RESEARCH|GENERAL)', resp.choices[0].message.content.upper())
@@ -92,7 +109,6 @@ async def analyze_intent(text: str) -> str:
 
 def get_family_by_intent(intent: str) -> str:
     return {"CODE": "deepseek", "MATH": "llama", "RESEARCH": "deepseek"}.get(intent, "llama")
-
 # --- 3. CORE CORE ---
 
 @app.post("/ask")
@@ -181,7 +197,11 @@ if TG_TOKEN:
 @app.on_event("startup")
 async def startup():
     if TG_TOKEN:
+        print("🤖 Перезапуск бота...")
+        # Сначала удаляем вебхук и все зависшие сообщения
         await bot.delete_webhook(drop_pending_updates=True)
+        # Небольшая пауза, чтобы Telegram успел закрыть старую сессию
+        await asyncio.sleep(1) 
         asyncio.create_task(dp.start_polling(bot))
 
 @app.get("/")
