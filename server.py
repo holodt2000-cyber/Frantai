@@ -68,6 +68,25 @@ async def quick_translate(text: str, target_lang: str):
         return resp.choices[0].message.content.strip()
     except: return text
 
+async def smart_translate_back(text: str):
+    """Переводит только текст вне блоков кода ``` """
+    # Находим блоки кода
+    parts = re.split(r'(```[\s\S]*?```)', text)
+    translated_parts = []
+    
+    for part in parts:
+        if part.startswith('```'):
+            # Это код — не трогаем
+            translated_parts.append(part)
+        elif part.strip():
+            # Это пояснения — переводим через Groq (быструю модель)
+            translated_parts.append(await quick_translate(part, "Russian"))
+        else:
+            translated_parts.append(part)
+            
+    return "".join(translated_parts)
+
+
 async def analyze_intent(text: str) -> str:
     try:
         client = OpenAI(api_key=KEYS["groq"], base_url="https://api.groq.com/openai/v1")
@@ -161,7 +180,7 @@ async def ask_ai(request: ChatRequest):
             final_content = msg.content
 
             if target["heavy"] and is_russian:
-                final_content = await quick_translate(final_content, "Russian")
+                final_content = await smart_translate_back(final_content)
 
             res = {
                 "status": "success", "model": resp.model, 
@@ -177,11 +196,21 @@ async def ask_ai(request: ChatRequest):
 
 @app.post("/expert")
 async def ask_expert(request: ChatRequest):
-    intent = request.intent or await analyze_intent(request.messages[-1].content)
+    user_msg = request.messages[-1].content
+    intent = request.intent or await analyze_intent(user_msg)
+    
+    if intent == "CODE":
+        # Инструкция: Код на английском, пояснения на английском (их переведет наш скрипт)
+        request.messages[-1].content += (
+            "\n\nSTRICT INSTRUCTION for CODE: "
+            "1. Write all code and technical comments in ENGLISH. "
+            "2. Provide explanations in English. "
+            "3. Keep all code inside triple backticks (```)."
+        )
+    
     request.family = get_family_by_intent(intent)
     request.intent = intent
     return await ask_ai(request)
-
 # --- 4. TELEGRAM BOT INTEGRATION ---
 
 # --- 4. TELEGRAM BOT INTEGRATION ---
