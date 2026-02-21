@@ -174,7 +174,7 @@ async def root():
         </div>
 
         <script>
-            async def sendMessage() {
+            async function sendMessage() {
                 const input = document.getElementById('user-input');
                 const btn = document.getElementById('send-btn');
                 const container = document.getElementById('chat-container');
@@ -203,6 +203,8 @@ async def root():
                         })
                     });
 
+                    if (!response.ok) throw new Error('Ошибка сервера');
+
                     const data = await response.json();
                     const aiDiv = document.createElement('div');
                     aiDiv.className = 'message ai';
@@ -210,12 +212,12 @@ async def root():
                     if (data.thought) {
                         const thoughtDiv = document.createElement('div');
                         thoughtDiv.className = 'thought';
-                        thoughtDiv.textContent = "Обдум: " + data.thought;
+                        thoughtDiv.innerHTML = "<b>Рассуждение:</b><br>" + data.thought.replace(/\n/g, '<br>');
                         aiDiv.appendChild(thoughtDiv);
                     }
 
                     const contentDiv = document.createElement('div');
-                    contentDiv.textContent = data.content;
+                    contentDiv.innerHTML = data.content.replace(/\n/g, '<br>');
                     aiDiv.appendChild(contentDiv);
 
                     const infoDiv = document.createElement('div');
@@ -228,7 +230,7 @@ async def root():
                     const errDiv = document.createElement('div');
                     errDiv.className = 'message ai';
                     errDiv.style.color = '#ff6b6b';
-                    errDiv.textContent = 'Ошибка: не удалось получить ответ.';
+                    errDiv.textContent = 'Ошибка: не удалось получить ответ от сервера.';
                     container.appendChild(errDiv);
                 } finally {
                     btn.disabled = false;
