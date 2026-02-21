@@ -67,32 +67,40 @@ async def quick_translate(text: str, target_lang: str):
     except: return text
 
 async def analyze_intent(text: str) -> str:
-    """Улучшенный классификатор с жесткими правилами"""
+    """Улучшенный классификатор: теперь он точно отличит код от болтовни"""
     try:
         client = OpenAI(api_key=KEYS["groq"], base_url="https://api.groq.com/openai/v1")
-        # Улучшаем промпт: добавляем описание категорий
-        system_prompt = (
-            "You are a classifier. Categories: "
-            "CODE (programming, scripts, databases, html/css), "
-            "MATH (formulas, equations), "
-            "RESEARCH (news, facts, search), "
-            "GENERAL (chat, greetings). "
-            "Return ONLY the category name."
-        )
+        
+        # Мы даем модели четкие инструкции (System Prompt)
+        messages = [
+            {
+                "role": "system", 
+                "content": (
+                    "You are a professional query classifier. "
+                    "Categories: CODE (any programming, scripts, architecture, debugging), "
+                    "MATH (formulas, logic puzzles), "
+                    "RESEARCH (news, facts, search queries), "
+                    "GENERAL (greetings, simple chat). "
+                    "Respond with ONLY ONE WORD from the list."
+                )
+            },
+            {"role": "user", "content": text}
+        ]
         
         resp = await asyncio.get_event_loop().run_in_executor(None, lambda: client.chat.completions.create(
             model="llama-3.1-8b-instant", 
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
-            ], 
-            timeout=5
+            messages=messages, 
+            temperature=0, # Убираем креативность для точности
+            timeout=7
         ))
+        
         intent = resp.choices[0].message.content.strip().upper()
-        # Чистим ответ от точек и лишних слов
-        intent = re.sub(r'[^A-Z]', '', intent)
+        # Очистка от лишних знаков препинания
+        intent = "".join(filter(str.isalpha, intent))
+        
         return intent if intent in ["CODE", "MATH", "RESEARCH"] else "GENERAL"
-    except: 
+    except Exception as e:
+        print(f"⚠️ Intent analysis failed: {e}")
         return "GENERAL"
 
 async def perplexity_search(query: str) -> str:
