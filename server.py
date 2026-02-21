@@ -134,6 +134,7 @@ async def ask_ai(request: ChatRequest):
     raise HTTPException(status_code=503, detail="All providers failed")
 
 @app.get("/health")
+@app.head("/health")
 async def health_check():
     return {"status": "online", "message": "I am alive and ready!"}
 if __name__ == "__main__":
