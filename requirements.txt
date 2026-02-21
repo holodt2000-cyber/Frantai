@@ -1,6 +1,5 @@
-fastapi
+"fastapi
 uvicorn
 pydantic
 openai
-duckduckgo_search
-typing-extensions
+duckduckgo_search" | Out-File -FilePath requirements.txt -Encoding utf8
