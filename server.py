@@ -147,98 +147,91 @@ async def root():
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Frantai AI Chat</title>
         <style>
-            body { background: #1a1a1a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; height: 100vh; margin: 0; }
-            #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-            .message { max-width: 80%; padding: 12px 16px; border-radius: 15px; line-height: 1.5; word-wrap: break-word; }
-            .user { align-self: flex-end; background: #2b5278; color: white; border-bottom-right-radius: 2px; }
-            .ai { align-self: flex-start; background: #333; border-bottom-left-radius: 2px; border: 1px solid #444; }
-            .thought { font-style: italic; color: #888; font-size: 0.9em; border-left: 2px solid #555; padding-left: 10px; margin-bottom: 8px; }
-            #input-area { background: #252525; padding: 20px; display: flex; gap: 10px; border-top: 1px solid #333; }
-            input { flex: 1; background: #333; border: 1px solid #444; color: white; padding: 12px; border-radius: 8px; outline: none; }
-            button { background: #0078d4; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; transition: 0.3s; }
-            button:hover { background: #005a9e; }
-            button:disabled { background: #555; cursor: not-allowed; }
-            .model-info { font-size: 0.7em; color: #666; margin-top: 5px; text-align: right; }
+            body { background: #1a1a1a; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+            #chat { flex: 1; overflow-y: auto; padding: 20px; }
+            .msg { margin-bottom: 15px; padding: 10px; border-radius: 10px; max-width: 80%; line-height: 1.4; }
+            .user { background: #2b5278; align-self: flex-end; margin-left: auto; }
+            .ai { background: #333; border: 1px solid #444; }
+            .thought { color: #888; font-size: 0.85em; border-left: 2px solid #555; padding-left: 10px; margin-bottom: 10px; white-space: pre-wrap; }
+            .content { white-space: pre-wrap; }
+            #input-box { background: #252525; padding: 20px; display: flex; gap: 10px; }
+            input { flex: 1; background: #333; border: 1px solid #444; color: white; padding: 10px; border-radius: 5px; }
+            button { background: #0078d4; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+            button:disabled { background: #555; }
         </style>
     </head>
     <body>
-        <div id="chat-container">
-            <div class="message ai">Привет! Я Frantai AI. Напиши что-нибудь, и я постараюсь помочь.</div>
+        <div id="chat">
+            <div class="msg ai">Система готова. Напиши свой вопрос!</div>
         </div>
-        <div id="input-area">
-            <input type="text" id="user-input" placeholder="Введите ваш вопрос..." onkeypress="if(event.key==='Enter') sendMessage()">
-            <button id="send-btn" onclick="sendMessage()">Отправить</button>
+        <div id="input-box">
+            <input type="text" id="prompt" placeholder="Ваше сообщение..." onkeypress="if(event.key=='Enter') send()">
+            <button id="btn" onclick="send()">Отправить</button>
         </div>
 
         <script>
-    async function sendMessage() {
-        console.log("Кнопка нажата!"); // Проверка нажатия
-        const input = document.getElementById('user-input');
-        const btn = document.getElementById('send-btn');
-        const container = document.getElementById('chat-container');
-        const text = input.value.trim();
+            async function send() {
+                const input = document.getElementById('prompt');
+                const btn = document.getElementById('btn');
+                const chat = document.getElementById('chat');
+                const text = input.value.trim();
 
-        if (!text) {
-            console.log("Пустой ввод");
-            return;
-        }
+                if (!text) return;
 
-        const userDiv = document.createElement('div');
-        userDiv.className = 'message user';
-        userDiv.textContent = text;
-        container.appendChild(userDiv);
+                // Добавляем сообщение юзера
+                const uMsg = document.createElement('div');
+                uMsg.className = 'msg user';
+                uMsg.textContent = text;
+                chat.appendChild(uMsg);
 
-        input.value = '';
-        btn.disabled = true;
-        container.scrollTop = container.scrollHeight;
+                input.value = '';
+                btn.disabled = true;
+                chat.scrollTop = chat.scrollHeight;
 
-        console.log("Отправка запроса на /ask...");
-        try {
-            const response = await fetch('/ask', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    messages: [{role: "user", content: text}],
-                    family: "llama",
-                    thinking: true
-                })
-            });
+                try {
+                    console.log("Отправка...");
+                    const res = await fetch('/ask', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            messages: [{role: "user", content: text}],
+                            family: "llama",
+                            thinking: true
+                        })
+                    });
 
-            console.log("Ответ получен, статус:", response.status);
-            const data = await response.json();
-            console.log("Данные JSON:", data);
+                    if (!res.ok) throw new Error('Код ошибки: ' + res.status);
+                    
+                    const data = await res.json();
+                    console.log("Получено:", data);
 
-            const aiDiv = document.createElement('div');
-            aiDiv.className = 'message ai';
+                    const aiMsg = document.createElement('div');
+                    aiMsg.className = 'msg ai';
 
-            if (data.thought) {
-                const thoughtDiv = document.createElement('div');
-                thoughtDiv.className = 'thought';
-                thoughtDiv.innerHTML = "<b>Обдум:</b><br>" + data.thought.replace(/\n/g, '<br>');
-                aiDiv.appendChild(thoughtDiv);
+                    let html = '';
+                    if (data.thought) {
+                        html += `<div class="thought"><b>Мысли ИИ:</b>\\n${data.thought}</div>`;
+                    }
+                    html += `<div class="content">${data.content}</div>`;
+                    
+                    aiMsg.innerHTML = html;
+                    chat.appendChild(aiMsg);
+
+                } catch (err) {
+                    console.error(err);
+                    const eMsg = document.createElement('div');
+                    eMsg.className = 'msg ai';
+                    eMsg.style.color = '#ff6b6b';
+                    eMsg.textContent = 'Ошибка: ' + err.message;
+                    chat.appendChild(eMsg);
+                } finally {
+                    btn.disabled = false;
+                    chat.scrollTop = chat.scrollHeight;
+                }
             }
-
-            const contentDiv = document.createElement('div');
-            contentDiv.innerHTML = (data.content || "Нет ответа").replace(/\n/g, '<br>');
-            aiDiv.appendChild(contentDiv);
-
-            container.appendChild(aiDiv);
-        } catch (e) {
-            console.error("Критическая ошибка:", e);
-            const errDiv = document.createElement('div');
-            errDiv.className = 'message ai';
-            errDiv.style.color = '#ff6b6b';
-            errDiv.textContent = 'Ошибка связи с сервером: ' + e.message;
-            container.appendChild(errDiv);
-        } finally {
-            btn.disabled = false;
-            container.scrollTop = container.scrollHeight;
-        }
-    }
-</script>
+        </script>
     </body>
     </html>
     """
