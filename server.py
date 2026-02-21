@@ -121,7 +121,7 @@ async def ask_ai(request: ChatRequest):
         try:
             current_content = request.messages[-1].content
             
-            # Перевод для улучшения качества логики Heavy моделей
+            # Перевод для Heavy моделей
             if target["heavy"] and is_russian:
                 current_content = await quick_translate(current_content, "English")
 
@@ -146,7 +146,6 @@ async def ask_ai(request: ChatRequest):
             if request.thinking and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
                 res["thought"] = msg.reasoning_content
             
-            print(f"✅ Model: {target['model']} | Intent: {intent}")
             return res
             
         except Exception as e:
@@ -155,11 +154,11 @@ async def ask_ai(request: ChatRequest):
 
     raise HTTPException(status_code=503, detail="Failover exhausted")
 
-# --- 4. ЭКСПЕРТНЫЙ ПУТЬ ---
+# --- 4. ЭКСПЕРТНЫЙ ПУТЬ (ИСПРАВЛЕНО НА POST) ---
 
 @app.post("/expert")
 async def ask_expert(request: ChatRequest):
-    """Маршрутизация по типам задач (Пункт 4)"""
+    """Маршрутизация по типам задач"""
     intent = request.intent or await analyze_intent(request.messages[-1].content)
     request.family = get_family_by_intent(intent)
     request.intent = intent
@@ -173,8 +172,4 @@ async def health(): return {"status": "online"}
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return "<h2>Frantai Orchestrator</h2><p>API is active. Use /ask for general or /expert for smart routing.</p>"
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    return "<h2>Frantai Orchestrator Running</h2>"
