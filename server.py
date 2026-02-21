@@ -157,7 +157,7 @@ async def ask_ai(request: ChatRequest):
 
 # --- 4. ЭКСПЕРТНЫЙ ПУТЬ ---
 
-@app.get("/expert")
+@app.post("/expert")
 async def ask_expert(request: ChatRequest):
     """Маршрутизация по типам задач (Пункт 4)"""
     intent = request.intent or await analyze_intent(request.messages[-1].content)
