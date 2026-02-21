@@ -10,44 +10,39 @@ from duckduckgo_search import DDGS
 
 warnings.filterwarnings("ignore")
 
-app = FastAPI(title="Zero-Cost AI API", description="FastAPI wrapper for multiple AI providers")
+app = FastAPI(title="Zero-Cost AI API with Translation")
 
 # --- КОНФИГУРАЦИЯ ---
 KEYS = {
-    "cerebras": "csk-x989hhdnn9p2nexmt24ndk9ten4k3cmd82je9k4jxcnjwh6x",
-    "sambanova": "6460e865-5a60-4cd8-b854-07d8d991b344",
-    "groq": "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",
-    "openrouter": "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"
+    "cerebras": os.getenv("CEREBRAS_KEY", "csk-x989hhdnn9p2nexmt24ndk9ten4k3cmd82je9k4jxcnjwh6x"),
+    "sambanova": os.getenv("SAMBANOVA_KEY", "6460e865-5a60-4cd8-b854-07d8d991b344"),
+    "groq": os.getenv("GROQ_KEY", "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"),
+    "openrouter": os.getenv("OPENROUTER_KEY", "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")
 }
 
 FAMILIES = {
     "deepseek": {
         "heavy": [
-            {"url": "https://api.sambanova.ai/v1", "key": KEYS["sambanova"], "model": "DeepSeek-R1"},
-            {"url": "https://openrouter.ai/api/v1", "key": KEYS["openrouter"], "model": "deepseek/deepseek-r1:free"}
+            {"url": "https://api.sambanova.ai/v1", "key": KEYS["sambanova"], "model": "DeepSeek-R1", "heavy": True},
+            {"url": "https://openrouter.ai/api/v1", "key": KEYS["openrouter"], "model": "deepseek/deepseek-r1:free", "heavy": True}
         ],
         "fast": [
-            {"url": "https://api.groq.com/openai/v1", "key": KEYS["groq"], "model": "deepseek-r1-distill-llama-70b"},
-            {"url": "https://api.cerebras.ai/v1", "key": KEYS["cerebras"], "model": "llama-3.3-70b"}
+            {"url": "https://api.groq.com/openai/v1", "key": KEYS["groq"], "model": "deepseek-r1-distill-llama-70b", "heavy": False},
+            {"url": "https://api.cerebras.ai/v1", "key": KEYS["cerebras"], "model": "llama-3.3-70b", "heavy": False}
         ]
     },
     "llama": {
         "heavy": [
-            {"url": "https://api.sambanova.ai/v1", "key": KEYS["sambanova"], "model": "Meta-Llama-3.1-405B-Instruct"},
-            {"url": "https://api.groq.com/openai/v1", "key": KEYS["groq"], "model": "llama-3.3-70b-versatile"}
+            {"url": "https://api.sambanova.ai/v1", "key": KEYS["sambanova"], "model": "Meta-Llama-3.1-405B-Instruct", "heavy": True},
+            {"url": "https://api.groq.com/openai/v1", "key": KEYS["groq"], "model": "llama-3.3-70b-versatile", "heavy": True}
         ],
         "fast": [
-            {"url": "https://api.cerebras.ai/v1", "key": KEYS["cerebras"], "model": "llama-3.3-70b"}, 
-            {"url": "https://api.groq.com/openai/v1", "key": KEYS["groq"], "model": "gemma2-9b-it"}
+            {"url": "https://api.cerebras.ai/v1", "key": KEYS["cerebras"], "model": "llama-3.3-70b", "heavy": False}, 
+            {"url": "https://api.groq.com/openai/v1", "key": KEYS["groq"], "model": "gemma2-9b-it", "heavy": False}
         ]
-    },
-    "qwen": {
-        "heavy": [{"url": "https://openrouter.ai/api/v1", "key": KEYS["openrouter"], "model": "qwen/qwen-2.5-72b-instruct:free"}],
-        "fast": [{"url": "https://api.groq.com/openai/v1", "key": KEYS["groq"], "model": "qwen-2.5-32b"}]
     }
 }
 
-# --- МОДЕЛИ ДАННЫХ ---
 class Message(BaseModel):
     role: str
     content: str
@@ -57,7 +52,22 @@ class ChatRequest(BaseModel):
     family: str = "llama"
     thinking: bool = True
 
-# --- ЛОГИКА ---
+# Вспомогательная функция для быстрого перевода через "быструю" модель
+async def quick_translate(text: str, target_lang: str):
+    try:
+        client = OpenAI(api_key=KEYS["groq"], base_url="https://api.groq.com/openai/v1")
+        prompt = f"Translate the following text to {target_lang}. Output ONLY the translation: {text}"
+        resp = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: client.chat.completions.create(
+                model="llama-3.3-70b-specdec", # Используем самую быструю модель для перевода
+                messages=[{"role": "user", "content": prompt}],
+                timeout=10
+            )
+        )
+        return resp.choices[0].message.content.strip()
+    except:
+        return text # Если перевод упал, возвращаем оригинал
+
 def analyze_complexity(text: str) -> bool:
     score = 0
     if len(text.split()) > 12: score += 2
@@ -71,57 +81,58 @@ async def ask_ai(request: ChatRequest):
     f_name = request.family.lower()
     f_data = FAMILIES.get(f_name, FAMILIES['llama'])
     
-    is_heavy = analyze_complexity(user_query)
-    queue = f_data["heavy"] + f_data["fast"] if is_heavy else f_data["fast"] + f_data["heavy"]
-    queue.append({"url": "https://openrouter.ai/api/v1", "key": KEYS["openrouter"], "model": "openrouter/auto:free"})
-
-    # Поиск (DuckDuckGo) - выносим в отдельный поток, чтобы не блочить async
-    try:
-        loop = asyncio.get_event_loop()
-        with DDGS() as ddgs:
-            res = await loop.run_in_executor(None, lambda: list(ddgs.text(user_query, region='ru-ru', max_results=1)))
-            if res:
-                request.messages[-1].content += f"\n\nКонтекст: {res[0]['body']}"
-    except:
-        pass
+    is_complex = analyze_complexity(user_query)
+    queue = f_data["heavy"] + f_data["fast"] if is_complex else f_data["fast"] + f_data["heavy"]
+    
+    # Пытаемся определить язык (упрощенно: если есть кириллица — русский)
+    is_russian = bool(re.search('[а-яА-Я]', user_query))
 
     for target in queue:
         try:
-            client = OpenAI(api_key=target['key'].strip(), base_url=target['url'])
-            headers = {"HTTP-Referer": "https://render.com"} if "openrouter" in target['url'] else None
+            current_content = user_query
+            
+            # 1. Перевод на английский для HEAVY моделей
+            if target["heavy"] and is_russian:
+                current_content = await quick_translate(user_query, "English")
 
-            # Запрос к API (используем асинхронную обертку для синхронного клиента OpenAI)
+            client = OpenAI(api_key=target['key'].strip(), base_url=target['url'])
+            
+            # Подменяем последний месседж на переведенный (если нужно)
+            request_messages = [m.model_dump() for m in request.messages]
+            request_messages[-1]["content"] = current_content
+
             resp = await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: client.chat.completions.create(
+                None, lambda: client.chat.completions.create(
                     model=target['model'],
-                    messages=[m.model_dump() for m in request.messages],
-                    timeout=50,
-                    extra_headers=headers
+                    messages=request_messages,
+                    timeout=60
                 )
             )
 
-            final_model = resp.model
             msg = resp.choices[0].message
-            
+            final_content = msg.content
+
+            # 2. Перевод обратно на русский
+            if target["heavy"] and is_russian:
+                final_content = await quick_translate(final_content, "Russian")
+
             result = {
                 "status": "success",
-                "model": f"{final_model} (via {target['model']})" if "auto" in target['model'] else final_model,
-                "content": msg.content
+                "model": resp.model,
+                "content": final_content
             }
 
-            if request.thinking and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+            if target["heavy"] and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
                 result["thought"] = msg.reasoning_content
             
             return result
             
         except Exception as e:
-            print(f"⚠️ Fail {target['model']}: {str(e)[:50]}")
+            print(f"⚠️ Ошибка {target['model']}: {str(e)[:50]}")
             continue
 
     raise HTTPException(status_code=503, detail="All providers failed")
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
