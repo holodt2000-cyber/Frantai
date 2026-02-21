@@ -71,16 +71,41 @@ async def quick_translate(text: str, target_lang: str):
 async def analyze_intent(text: str) -> str:
     try:
         client = OpenAI(api_key=KEYS["groq"], base_url="https://api.groq.com/openai/v1")
+        
+        # Усиленный промпт с примерами (Few-Shot)
         messages = [
-            {"role": "system", "content": "Return ONLY ONE WORD: CODE, MATH, RESEARCH, or GENERAL."},
+            {
+                "role": "system", 
+                "content": (
+                    "You are a strict classifier. Categorize user query into ONLY ONE word:\n"
+                    "CODE: Programming, scripts, SQL, HTML/CSS, errors, architecture.\n"
+                    "MATH: Calculations, logic puzzles, formulas.\n"
+                    "RESEARCH: News, current events, fact-checking, web search.\n"
+                    "GENERAL: Greetings, chat, or if no other category fits.\n\n"
+                    "Examples:\n"
+                    "'Write a python script' -> CODE\n"
+                    "'How to fix 404 error' -> CODE\n"
+                    "'2+2*2' -> MATH\n"
+                    "'Latest bitcoin price' -> RESEARCH"
+                )
+            },
             {"role": "user", "content": text}
         ]
+        
         resp = await asyncio.get_event_loop().run_in_executor(None, lambda: client.chat.completions.create(
-            model="llama-3.1-8b-instant", messages=messages, temperature=0, timeout=7
+            model="llama-3.1-8b-instant", 
+            messages=messages, 
+            temperature=0, 
+            timeout=7
         ))
-        intent = "".join(filter(str.isalpha, resp.choices[0].message.content.strip().upper()))
-        return intent if intent in ["CODE", "MATH", "RESEARCH"] else "GENERAL"
-    except: return "GENERAL"
+        
+        # Берем только первое слово, убираем мусор
+        raw_intent = resp.choices[0].message.content.strip().upper()
+        intent = re.search(r'(CODE|MATH|RESEARCH|GENERAL)', raw_intent)
+        
+        return intent.group(0) if intent else "GENERAL"
+    except:
+        return "GENERAL"
 
 async def perplexity_search(query: str) -> str:
     try:
