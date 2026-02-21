@@ -1,5 +1,0 @@
-fastapi
-uvicorn
-openai
-duckduckgo_search
-pydantic
