@@ -174,70 +174,71 @@ async def root():
         </div>
 
         <script>
-            async function sendMessage() {
-                const input = document.getElementById('user-input');
-                const btn = document.getElementById('send-btn');
-                const container = document.getElementById('chat-container');
-                const text = input.value.trim();
+    async function sendMessage() {
+        console.log("Кнопка нажата!"); // Проверка нажатия
+        const input = document.getElementById('user-input');
+        const btn = document.getElementById('send-btn');
+        const container = document.getElementById('chat-container');
+        const text = input.value.trim();
 
-                if (!text) return;
+        if (!text) {
+            console.log("Пустой ввод");
+            return;
+        }
 
-                // Добавляем сообщение пользователя
-                const userDiv = document.createElement('div');
-                userDiv.className = 'message user';
-                userDiv.textContent = text;
-                container.appendChild(userDiv);
+        const userDiv = document.createElement('div');
+        userDiv.className = 'message user';
+        userDiv.textContent = text;
+        container.appendChild(userDiv);
 
-                input.value = '';
-                btn.disabled = true;
-                container.scrollTop = container.scrollHeight;
+        input.value = '';
+        btn.disabled = true;
+        container.scrollTop = container.scrollHeight;
 
-                try {
-                    const response = await fetch('/ask', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            messages: [{role: "user", content: text}],
-                            family: "llama",
-                            thinking: true
-                        })
-                    });
+        console.log("Отправка запроса на /ask...");
+        try {
+            const response = await fetch('/ask', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: [{role: "user", content: text}],
+                    family: "llama",
+                    thinking: true
+                })
+            });
 
-                    if (!response.ok) throw new Error('Ошибка сервера');
+            console.log("Ответ получен, статус:", response.status);
+            const data = await response.json();
+            console.log("Данные JSON:", data);
 
-                    const data = await response.json();
-                    const aiDiv = document.createElement('div');
-                    aiDiv.className = 'message ai';
+            const aiDiv = document.createElement('div');
+            aiDiv.className = 'message ai';
 
-                    if (data.thought) {
-                        const thoughtDiv = document.createElement('div');
-                        thoughtDiv.className = 'thought';
-                        thoughtDiv.innerHTML = "<b>Рассуждение:</b><br>" + data.thought.replace(/\n/g, '<br>');
-                        aiDiv.appendChild(thoughtDiv);
-                    }
-
-                    const contentDiv = document.createElement('div');
-                    contentDiv.innerHTML = data.content.replace(/\n/g, '<br>');
-                    aiDiv.appendChild(contentDiv);
-
-                    const infoDiv = document.createElement('div');
-                    infoDiv.className = 'model-info';
-                    infoDiv.textContent = data.model || "AI Model";
-                    aiDiv.appendChild(infoDiv);
-
-                    container.appendChild(aiDiv);
-                } catch (e) {
-                    const errDiv = document.createElement('div');
-                    errDiv.className = 'message ai';
-                    errDiv.style.color = '#ff6b6b';
-                    errDiv.textContent = 'Ошибка: не удалось получить ответ от сервера.';
-                    container.appendChild(errDiv);
-                } finally {
-                    btn.disabled = false;
-                    container.scrollTop = container.scrollHeight;
-                }
+            if (data.thought) {
+                const thoughtDiv = document.createElement('div');
+                thoughtDiv.className = 'thought';
+                thoughtDiv.innerHTML = "<b>Обдум:</b><br>" + data.thought.replace(/\n/g, '<br>');
+                aiDiv.appendChild(thoughtDiv);
             }
-        </script>
+
+            const contentDiv = document.createElement('div');
+            contentDiv.innerHTML = (data.content || "Нет ответа").replace(/\n/g, '<br>');
+            aiDiv.appendChild(contentDiv);
+
+            container.appendChild(aiDiv);
+        } catch (e) {
+            console.error("Критическая ошибка:", e);
+            const errDiv = document.createElement('div');
+            errDiv.className = 'message ai';
+            errDiv.style.color = '#ff6b6b';
+            errDiv.textContent = 'Ошибка связи с сервером: ' + e.message;
+            container.appendChild(errDiv);
+        } finally {
+            btn.disabled = false;
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+</script>
     </body>
     </html>
     """
