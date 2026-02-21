@@ -194,29 +194,31 @@ if TG_TOKEN:
 
     @dp.message()
     async def message_handler(message: types.Message):
-        # Эмуляция ChatRequest для вызова внутренней логики
         req = ChatRequest(messages=[Message(role="user", content=message.text)])
-        
-        # Отправляем статус "печатает"
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         
         try:
-            # Вызываем экспертную логику напрямую
             response = await ask_expert(req)
             
-            header = f"🤖 *Model:* `{response['model']}` | 🎯 *Intent:* `{response['intent']}`\n\n"
+            # Формируем заголовок
+            header = f"🤖 *Model:* `{response['model']}`\n🎯 *Intent:* `{response['intent']}`\n\n"
             content = response['content']
             
-            # Если ответ слишком длинный для одного сообщения (лимит 4096)
             full_text = header + content
-            if len(full_text) > 4000:
-                for i in range(0, len(full_text), 4000):
-                    await message.answer(full_text[i:i+4000])
-            else:
-                await message.answer(full_text)
+
+            # Трюк: если Markdown ломает отправку, пробуем отправить как обычный текст
+            try:
+                if len(full_text) > 4000:
+                    for i in range(0, len(full_text), 4000):
+                        await message.answer(full_text[i:i+4000], parse_mode=ParseMode.MARKDOWN)
+                else:
+                    await message.answer(full_text, parse_mode=ParseMode.MARKDOWN)
+            except Exception:
+                # Если упало с ошибкой парсинга — отправляем без оформления
+                await message.answer(full_text, parse_mode=None)
+                
         except Exception as e:
             await message.answer(f"⚠️ Ошибка: {str(e)[:100]}")
-
 # --- 5. LIFECYCLE & UTILS ---
 
 @app.on_event("startup")
