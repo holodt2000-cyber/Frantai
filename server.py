@@ -184,7 +184,10 @@ async def ask_expert(request: ChatRequest):
 
 # --- 4. TELEGRAM BOT INTEGRATION ---
 
+# --- 4. TELEGRAM BOT INTEGRATION ---
+
 if TG_TOKEN:
+    # Используем MARKDOWN (V1) — он менее капризный к спецсимволам, чем V2
     bot = Bot(token=TG_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
     dp = Dispatcher()
 
@@ -194,39 +197,60 @@ if TG_TOKEN:
 
     @dp.message()
     async def message_handler(message: types.Message):
-        req = ChatRequest(messages=[Message(role="user", content=message.text)])
+        print(f"DEBUG: Received message: {message.text[:50]}") # Увидим в логах Render
+        
+        # Подготовка запроса
+        msg_obj = Message(role="user", content=message.text)
+        req = ChatRequest(messages=[msg_obj])
+        
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         
         try:
+            # Вызываем экспертную функцию
             response = await ask_expert(req)
             
-            # Формируем заголовок
+            # Чистим текст: Markdown в ТГ не любит одиночные символы '_' вне блоков кода
+            # Но мы просто используем твой трюк с try-except
             header = f"🤖 *Model:* `{response['model']}`\n🎯 *Intent:* `{response['intent']}`\n\n"
-            content = response['content']
+            content = response.get('content', '')
             
-            full_text = header + content
+            # Вывод мыслей модели (если есть)
+            thought = ""
+            if "thought" in response:
+                thought = f"🧠 *Thought:* \n||{response['thought'][:500]}...||\n\n" # Скрываем под спойлер
 
-            # Трюк: если Markdown ломает отправку, пробуем отправить как обычный текст
+            full_text = header + thought + content
+
             try:
-                if len(full_text) > 4000:
-                    for i in range(0, len(full_text), 4000):
-                        await message.answer(full_text[i:i+4000], parse_mode=ParseMode.MARKDOWN)
+                # Разбивка длинных сообщений
+                if len(full_text) > 4096:
+                    for x in range(0, len(full_text), 4096):
+                        await message.answer(full_text[x:x+4096])
                 else:
                     await message.answer(full_text, parse_mode=ParseMode.MARKDOWN)
-            except Exception:
-                # Если упало с ошибкой парсинга — отправляем без оформления
-                await message.answer(full_text, parse_mode=None)
+            except Exception as e:
+                print(f"Markdown Error: {e}")
+                await message.answer(full_text, parse_mode=None) # Fallback на обычный текст
                 
         except Exception as e:
+            print(f"Global Bot Error: {e}")
             await message.answer(f"⚠️ Ошибка: {str(e)[:100]}")
+
 # --- 5. LIFECYCLE & UTILS ---
 
 @app.on_event("startup")
 async def on_startup():
     if TG_TOKEN:
-        print("✅ Telegram Bot polling started...")
+        print("✅ Starting Telegram Bot polling...")
+        # Удаляем вебхуки, чтобы polling работал чисто
+        await bot.delete_webhook(drop_pending_updates=True)
+        # Запускаем в фоне
         asyncio.create_task(dp.start_polling(bot))
 
+@app.on_event("shutdown")
+async def on_shutdown():
+    if TG_TOKEN:
+        await bot.session.close()
 @app.get("/health")
 async def health(): return {"status": "online"}
 
