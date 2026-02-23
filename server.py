@@ -2,12 +2,13 @@ import warnings
 import os
 import re
 import asyncio
+import httpx  # Не забудь добавить в requirements.txt
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from openai import OpenAI
 from duckduckgo_search import DDGS
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
@@ -24,6 +25,8 @@ KEYS = {
     "openrouter": os.getenv("OPENROUTER_KEY", "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")
 }
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN", "6796190792:AAEngQeCe0z7XtwhyqCpB-1ADWgBOXx9VWo")
+# URL твоего приложения на Render (нужно для селф-пинга)
+APP_URL = os.getenv("RENDER_EXTERNAL_URL", f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}.onrender.com" if os.getenv('RENDER_EXTERNAL_HOSTNAME') else None)
 
 FAMILIES = {
     "deepseek": {
@@ -57,6 +60,21 @@ class ChatRequest(BaseModel):
 
 # --- 2. MODULES ---
 
+async def keep_alive():
+    """Фоновая задача для предотвращения засыпания Render"""
+    if not APP_URL:
+        print("⚠️ APP_URL не настроен, селф-пинг отключен.")
+        return
+    
+    async with httpx.AsyncClient() as client:
+        while True:
+            await asyncio.sleep(600) # 10 минут
+            try:
+                resp = await client.get(f"{APP_URL}/health")
+                print(f"🚀 Self-ping: {resp.status_code}")
+            except Exception as e:
+                print(f"❌ Self-ping error: {e}")
+
 async def quick_translate(text: str, target_lang: str):
     try:
         client = OpenAI(api_key=KEYS["groq"], base_url="https://api.groq.com/openai/v1")
@@ -83,24 +101,7 @@ async def analyze_intent(text: str) -> str:
         client = OpenAI(api_key=KEYS["groq"], base_url="[https://api.groq.com/openai/v1](https://api.groq.com/openai/v1)")
         resp = await asyncio.get_event_loop().run_in_executor(None, lambda: client.chat.completions.create(
             model="llama-3.1-8b-instant", 
-            messages= [
-            {
-                "role": "system", 
-                "content": (
-                    "You are a strict classifier. Categorize user query into ONLY ONE word:\n"
-                    "CODE: Programming, scripts, SQL, HTML/CSS, errors, architecture.\n"
-                    "MATH: Calculations, logic puzzles, formulas.\n"
-                    "RESEARCH: News, current events, fact-checking, web search.\n"
-                    "GENERAL: Greetings, chat, or if no other category fits.\n\n"
-                    "Examples:\n"
-                    "'Write a python script' -> CODE\n"
-                    "'How to fix 404 error' -> CODE\n"
-                    "'2+2*2' -> MATH\n"
-                    "'Latest bitcoin price' -> RESEARCH"
-                )
-            },
-            {"role": "user", "content": text}
-        ],
+            messages=[{"role": "system", "content": "Return one word: CODE, MATH, RESEARCH, or GENERAL."}, {"role": "user", "content": text}],
             temperature=0, timeout=7
         ))
         match = re.search(r'(CODE|MATH|RESEARCH|GENERAL)', resp.choices[0].message.content.upper())
@@ -108,8 +109,10 @@ async def analyze_intent(text: str) -> str:
     except: return "GENERAL"
 
 def get_family_by_intent(intent: str) -> str:
-    return {"CODE": "deepseek", "MATH": "llama", "RESEARCH": "deepseek"}.get(intent, "llama")
-# --- 3. CORE CORE ---
+    # Заставляем даже GENERAL идти через DeepSeek для "мыслей"
+    return {"CODE": "deepseek", "MATH": "llama", "RESEARCH": "deepseek", "GENERAL": "deepseek"}.get(intent, "deepseek")
+
+# --- 3. CORE AI ---
 
 @app.post("/ask")
 async def ask_ai(request: ChatRequest):
@@ -118,14 +121,14 @@ async def ask_ai(request: ChatRequest):
     
     f_data = FAMILIES.get(request.family.lower(), FAMILIES['llama'])
     is_russian = bool(re.search('[а-яА-Я]', user_query))
-    queue = f_data["heavy"] + f_data["fast"] # Для экспертного режима всегда пробуем Heavy первым
+    queue = f_data["heavy"] + f_data["fast"]
 
     for target in queue:
         try:
             curr_msg = user_query
             if target["heavy"] and is_russian:
                 curr_msg = await quick_translate(user_query, "English")
-                curr_msg += "\n\nSTRICT: Answer in Russian. Keep all code, variables and technical comments in English inside blocks."
+                curr_msg += "\n\nSTRICT: Answer in Russian. Keep code/technical comments in English inside blocks."
 
             client = OpenAI(api_key=target['key'].strip(), base_url=target['url'])
             req_messages = [m.model_dump() for m in request.messages]
@@ -193,19 +196,24 @@ if TG_TOKEN:
         except Exception as e:
             await m.answer(f"❌ Ошибка: {str(e)[:100]}")
 
-# --- 5. START ---
+# --- 5. LIFECYCLE & MONITORING ---
+
+@app.get("/health")
+async def health():
+    return JSONResponse(content={"status": "online", "bot": "active"}, status_code=200)
+
 @app.on_event("startup")
 async def startup():
     if TG_TOKEN:
         print("🤖 Перезапуск бота...")
-        # Сначала удаляем вебхук и все зависшие сообщения
         await bot.delete_webhook(drop_pending_updates=True)
-        # Небольшая пауза, чтобы Telegram успел закрыть старую сессию
         await asyncio.sleep(1) 
         asyncio.create_task(dp.start_polling(bot))
+        # Запуск фонового пинга самого себя
+        asyncio.create_task(keep_alive())
 
 @app.get("/")
-async def index(): return HTMLResponse("⚙️ Orchestrator Active")
+async def index(): return HTMLResponse("⚙️ Orchestrator Active. Bot is polling.")
 
 if __name__ == "__main__":
     import uvicorn
